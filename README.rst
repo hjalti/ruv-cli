@@ -6,6 +6,6 @@ Installation
 
 Run
 
-    pip install git+git://github.com/celery/django-celery.git
+    pip install git+git://github.com/hjalti/ruv-cli
 
 and then `ruv --help`.
