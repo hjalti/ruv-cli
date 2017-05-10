@@ -28,10 +28,9 @@ def live(args):
     play_stream(args, RUV_LIVE_URL)
 
 def paginate_show_list(lis):
-    pydoc.pager('\n'.join(x[1] for x in lis))
+    pydoc.pager('\n'.join(x[0] for x in lis))
 
 def episode_list(path):
-    import pdb; pdb.set_trace()
     req = requests.get(url(path))
     soup = BeautifulSoup(req.text, "html.parser")
     episodes_path = soup.find('a', text='Fleiri þættir')
