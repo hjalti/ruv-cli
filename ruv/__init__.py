@@ -58,6 +58,9 @@ def shows(args):
             show, path = results[0]
             print('Chosen show is: %s' % show)
             elist = episode_list(path)
+            if elist is None:
+                print('No episodes available')
+                return
             if args.play:
                 if args.offset >= len(elist):
                     print('Offset out of range, playing latest')
