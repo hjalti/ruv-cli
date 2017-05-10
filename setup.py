@@ -8,7 +8,7 @@ with open('README.rst') as f:
 
 setup(
     name='ruv',
-    version='0.0.1',
+    version='0.0.2',
     description='Command line interface for RUV',
     long_description=readme,
     url='https://github.com/hjalti/ruv-cli',
