@@ -59,11 +59,11 @@ def shows(args):
             print('Chosen show is: %s' % show)
             elist = episode_list(path)
             if args.play:
-                if args.offset < len(elist):
+                if args.offset >= len(elist):
                     print('Offset out of range, playing latest')
                     args.offset = 0
                 epath, date = elist[args.offset]
-                print('Playing episode published: %s', date)
+                print('Playing episode published: %s' % date)
                 play_stream(args, get_playable_url(url(epath)))
             else:
                 print('Episode list:')
