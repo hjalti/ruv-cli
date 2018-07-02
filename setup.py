@@ -23,8 +23,8 @@ setup(
     entry_points={
         'console_scripts': [
             'ruv=ruv:main',
-            'ruv-live=ruv:live',
-            'ruv2-live=ruv:live2',
+            'ruv-live=ruv:default_live',
+            'ruv2-live=ruv:default_live2',
         ],
     },
 )

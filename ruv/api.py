@@ -2,7 +2,7 @@ import requests
 from functools import wraps
 from urllib.parse import urljoin
 from datetime import date
-from models import Overview, SearchResults, ProgramDetails, Schedule
+from .models import Overview, SearchResults, ProgramDetails, Schedule
 
 API_URL = 'https://api.ruv.is/api/'
 

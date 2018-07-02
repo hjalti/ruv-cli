@@ -4,9 +4,9 @@ import requests
 import subprocess
 from pydoc import pager
 from datetime import timedelta, date
-from choose import choose
+from .choose import choose
 
-import api
+import ruv.api
 
 RUV_URL = 'http://ruv.is/'
 DEFAULT_PLAYER = '/usr/bin/mpv'
@@ -43,8 +43,11 @@ def play(args):
 def live(args):
     play_stream(args.video_player, CHANNELS[args.channel])
 
-def live2(args):
-    play_stream(args.video_player, 'ruv2')
+def default_live():
+    play_stream(DEFAULT_PLAYER, CHANNELS['ruv'])
+
+def default_live2():
+    play_stream(DEFAULT_PLAYER, CHANNELS['ruv2'])
 
 def radio(args):
     play_stream(args.video_player, RADIO[args.channel])
