@@ -1,15 +1,20 @@
 import argparse
-import re
-import requests
 import subprocess
-from pydoc import pager
+import re
+import sys
+from functools import partial
 from datetime import timedelta, date
-from .choose import choose
+from urllib.parse import urlsplit, parse_qs
 
-import ruv.api
+from requests.exceptions import HTTPError, ConnectionError
+
+from .choose import choose
+from .conf import config_exists, copy_config, CONFIG_PATH, PLAYER
+import ruv.api as api
+
+eprint = partial(print, file=sys.stderr)
 
 RUV_URL = 'http://ruv.is/'
-DEFAULT_PLAYER = '/usr/bin/mpv'
 RUV_BASE_URL = 'http://ruvruv-live.hls.adaptive.level3.net/ruv/%s/index.m3u8'
 RUV_RADIO_BASE_URL = 'http://sip-live.hds.adaptive.level3.net/hls-live/ruv-%s/_definst_/live.m3u8'
 CHANNELS = {
@@ -26,32 +31,95 @@ RADIO = {
 RADIO_NAMES = list(RADIO.keys())
 
 
+def graceful(func):
+    def wrapper(*args, **kwargs):
+        try:
+            func(*args, **kwargs)
+        except HTTPError as e:
+            eprint(f'The RUV API responded with an error ({e.response.status_code})')
+            eprint(f'URL: {e.request.url}')
+        except ConnectionError as e:
+            eprint(f'Error connecting to the RUV API')
+    return wrapper
+
+
 def url(path):
     return RUV_URL + path
 
-def play_stream(video_player, url):
-    subprocess.call([video_player, url])
 
-def get_playable_url(url):
-    resp = requests.get(url)
-    return re.search('video\.src = "(.*)";', resp.text).group(1)
+def play_stream(args, url):
+    if args and args.video_player:
+        player = [args.video_player]
+    else:
+        player = PLAYER
+    subprocess.call(player + [url])
 
-def play(args):
-    url = get_playable_url(args.url)
-    play_stream(args, url)
 
 def live(args):
-    play_stream(args.video_player, CHANNELS[args.channel])
+    play_stream(args, CHANNELS[args.channel])
+
 
 def default_live():
-    play_stream(DEFAULT_PLAYER, CHANNELS['ruv'])
+    play_stream(None, CHANNELS['ruv'])
+
 
 def default_live2():
-    play_stream(DEFAULT_PLAYER, CHANNELS['ruv2'])
+    play_stream(None, CHANNELS['ruv2'])
+
 
 def radio(args):
-    play_stream(args.video_player, RADIO[args.channel])
+    play_stream(args, RADIO[args.channel])
 
+
+def menu(choices, title, on_chosen, display=lambda x: x.display()):
+    choice = None
+    while True:
+        index = (choice and choice.index) or 0
+        choice = choose(
+                choices,
+                title=title,
+                display=display,
+                initial_index=index
+        )
+        if choice is None:
+            break
+        on_chosen(choice.item)
+
+
+def program_details_menu(args, program_id):
+    details = api.program_details(program_id)
+    menu(details.episodes, details.header, lambda ep: play_stream(args, ep.file))
+
+
+def choose_program_menu(args, programs, title):
+    def when_chosen(prog):
+        if not prog.multiple_episodes:
+            play_stream(args, prog.episodes[0].file)
+        else:
+            program_details_menu(args, prog.id)
+    menu(programs, title, when_chosen)
+
+
+@graceful
+def play(args):
+    parsed = urlsplit(args.url)
+    parts = parsed.path.split('/')
+    prog_id = (parts or '') and parts[-1]
+    query = parse_qs(parsed.query)
+    if not re.fullmatch('\d+', prog_id) or 'ep' not in query:
+        print('Unplayable URL')
+        return
+    ep_id = (query['ep'] or '') and query['ep'][0]
+    details = api.program_details(prog_id)
+    eps = [ep for ep in details.episodes if ep.id == ep_id]
+    if not eps:
+        print('Episode not found')
+        return
+    play_stream(args, eps[0].file)
+
+
+
+@graceful
 def search(args):
     results = api.search(args.query)
     if results.empty():
@@ -63,7 +131,7 @@ def search(args):
         episodes = program.episodes
         if episodes:
             if args.offset:
-                details = api.program_details(program.id)
+                details = api.program_details_menu(program.id)
                 episodes = details.episodes
             if args.offset >= len(episodes):
                 print('Offset out of range, playing oldest')
@@ -74,45 +142,44 @@ def search(args):
                 print(episode.display())
             else:
                 print(program.display())
-            play_stream(args.video_player, episode.file)
+            play_stream(args, episode.file)
         else:
             print('No episodes available')
     else:
-        print('Search results:')
-        pager(results.display())
+        choose_program_menu(args, results.programs, results.title)
 
+
+@graceful
 def featured(args):
     feat = api.featured()
-    while True:
-        panel = choose(feat.panels, lambda x: x.title)
-        if panel is None:
-            return
-        program = choose(panel.programs, lambda x: x.display())
-        if program is None:
-            continue
-        play_stream(args.video_player, program.episodes[0].file)
-        break
+    menu(feat.panels, 'Featured programs', lambda pan: choose_program_menu(args, pan.programs, pan.title), display=lambda pan: pan.title)
 
 
+@graceful
 def schedule(args):
+    def when_selected(event):
+        if event.is_playable():
+            play_stream(args, event.program.episodes[0].file)
+
     day = date.today() + timedelta(days=args.day)
     schedule = api.schedule(args.channel, day)
-    choice = choose(schedule.events, lambda x: x.display())
-    if choice:
-        if not choice.program or not choice.web_accessible:
-            print('This event cannot be played')
-        else:
-            play_stream(args.video_player, choice.program.episodes[0].file)
+    menu(schedule.events, schedule.long_title, when_selected)
+
+
+def config(args):
+    if config_exists():
+        inp = input('Config file already exists. Overwrite? [y/N] ')
+        if not inp.lower().startswith('y'):
+            return
+    copy_config()
+    print(f"Config copied to '{CONFIG_PATH}'")
+
 
 def main():
     parser = argparse.ArgumentParser(description='A command line interface for RUV', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument('-p', '--video-player', metavar='PLAYER', help='The video player used to play the stream', default=DEFAULT_PLAYER)
+    parser.add_argument('-p', '--video-player', metavar='PLAYER', help='The video player used to play the stream', default=None)
 
     subparsers = parser.add_subparsers()
-
-    play_parser = subparsers.add_parser('play', help='Play a program from a URL')
-    play_parser.add_argument('url', metavar='URL', help='URL of the page containing the stream')
-    play_parser.set_defaults(func=play)
 
     live_parser = subparsers.add_parser('live', help='Watch RUV live')
     live_parser.add_argument('channel', metavar='CHANNEL', help=f'Channel to stream. Choose from: {", ".join(CHANNEL_NAMES)}', default='ruv', nargs='?', choices=CHANNEL_NAMES)
@@ -121,6 +188,11 @@ def main():
     radio_parser = subparsers.add_parser('radio', help='Listen to live radio')
     radio_parser.add_argument('channel', metavar='CHANNEL', help=f'Radio channel to stream. Choose from: {", ".join(RADIO_NAMES)}', default='ras2', nargs='?', choices=RADIO_NAMES)
     radio_parser.set_defaults(func=radio)
+
+    schedule_parser = subparsers.add_parser('schedule', help='List and watch RUV shows')
+    schedule_parser.add_argument('-c', '--channel', metavar='CHANNEL', help=f'Channel to stream. Choose from: {", ".join(CHANNEL_NAMES)}. Default: %(default)s', default='ruv')
+    schedule_parser.add_argument('day', metavar='DAY', help=f'', nargs='?', default=0, type=int)
+    schedule_parser.set_defaults(func=schedule)
 
     show_parser = subparsers.add_parser('search', help='List and watch RUV shows')
     show_parser.add_argument('query', metavar='QUERY', help='Search shows matching this query')
@@ -132,11 +204,12 @@ def main():
     featured_parser = subparsers.add_parser('featured', help='List features programs')
     featured_parser.set_defaults(func=featured)
 
-    schedule_parser = subparsers.add_parser('schedule', help='List and watch RUV shows')
-    schedule_parser.add_argument('-c', '--channel', metavar='CHANNEL', help=f'Channel to stream. Choose from: {", ".join(CHANNEL_NAMES)}. Default: %(default)s', default='ruv')
-    schedule_parser.add_argument('day', metavar='DAY', help=f'', nargs='?', default=0, type=int)
-    schedule_parser.set_defaults(func=schedule)
+    play_parser = subparsers.add_parser('play', help='Play a program from a URL')
+    play_parser.add_argument('url', metavar='URL', help='URL of the page containing the stream')
+    play_parser.set_defaults(func=play)
 
+    config_parser = subparsers.add_parser('config', help='Copy the default configuration to your home directory for customization')
+    config_parser.set_defaults(func=config)
 
     args = parser.parse_args()
     if not hasattr(args, 'func'):
