@@ -141,6 +141,7 @@ class ListDisplay:
         curses.noecho()
         curses.cbreak()
         curses.start_color()
+        curses.use_default_colors()
         self.screen.keypad(1)
         curses.curs_set(0)
         self.update_size()
