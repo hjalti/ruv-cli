@@ -26,37 +26,35 @@ class ModelBase:
             if attr:
                 setattr(self, name, model(attr))
 
-def format(st, indent=0):
-    wat = textwrap.indent(
-            textwrap.dedent(st.lstrip('\n').rstrip()),
-            indent * 4 * ' '
-    )
-    return wat
+
+def format_description(lines):
+    desc = []
+    for line in lines:
+        desc.append(textwrap.indent(line, 4 * ' '))
+    if not desc:
+        desc.append('    [No description]')
+    return '\n'.join(desc)
+
 
 def parse_date(date):
     return datetime.strptime(date, TIME_FORMAT)
 
+
 def format_time(date):
     return datetime.strftime(date, '%H:%M')
+
 
 class Episode(ModelBase):
     def __init__(self, dic):
         super().__init__(dic)
         self.files = ModelBase(self.files)
 
-    def _short_description(self):
-        if self.short_description:
-            return self.short_description
-        return '[No description]'
+    def display(self):
+        return '\n'.join([
+            f'{self.title} ({self.firstrun})',
+            format_description((self.short_description or '').strip().splitlines())
+        ])
 
-    def display(self, indent=0):
-        return format(
-            f'''
-            {self.title} ({self.firstrun})
-                {self._short_description()}
-            ''',
-            indent
-        )
 
 class Program(ModelBase):
     def __init__(self, dic):
@@ -66,21 +64,16 @@ class Program(ModelBase):
             self.title = 'unknown'
 
     def _title(self):
-        if self.foreign_title:
-            return self.foreign_title
-        return self.title
+        if not self.foreign_title:
+            return self.title
+        return f'{self.title} ({self.foreign_title})'
 
-    def display(self, indent=0):
-        title = self.title
-        if indent == 0:
-            title = title.upper()
-        return format(
-            f'''
-            {self._title().strip()} ({'Series' if self.multiple_episodes else 'Movie/Short'})
-                {self.short_description.strip()}
-            ''',
-            indent
-        )
+    def display(self):
+        return '\n'.join([
+            f"{self._title().strip()} ({'Series' if self.multiple_episodes else 'Movie/Short'})",
+            format_description((self.short_description or '').strip().splitlines())
+        ])
+
 
 class Panel(ModelBase):
     def __init__(self, dic):
@@ -93,6 +86,7 @@ class Panel(ModelBase):
             f'{self.title.upper()}:',
             programs
         ])
+
 
 class SearchResults(ModelBase):
     def __init__(self, dic):
@@ -117,6 +111,7 @@ class SearchResults(ModelBase):
             programs
         ])
 
+
 class ProgramDetails(ModelBase):
     def __init__(self, dic):
         super().__init__(dic)
@@ -125,16 +120,24 @@ class ProgramDetails(ModelBase):
 
     @property
     def long_description(self):
+        if not self.description:
+            return '[No description]'
         return '\n'.join(self.description)
+
+    def _title(self):
+        if not self.title:
+            return '[no title]'
+        if not self.foreign_title:
+            return self.title
+        return f'{self.title} ({self.foreign_title})'
 
     @property
     def header(self):
-        return format(
-            f'''
-            {(self.title or '[no title]').upper()}
-            {self.short_description}
-            '''
-        )
+        return '\n'.join([
+            f"{self._title().upper()}",
+            self.long_description
+        ])
+
 
 class Overview(ModelBase):
     def __init__(self, dic):
@@ -143,6 +146,7 @@ class Overview(ModelBase):
 
     def display(self, indent=0):
         return '\n'.join(p.display() for p in self.panels)
+
 
 class Event(ModelBase):
     def __init__(self, dic):
@@ -183,13 +187,11 @@ class Event(ModelBase):
         elif not self.has_passed():
             availability = ' [Not started]'
 
-        return format(
-            f'''
-            {self.start_time_friendly}: {self._title()}{self._episode_of()}{availability}
-                   {self.full_description}
-            ''',
-            indent
-        )
+        return '\n'.join([
+            f'{self.start_time_friendly}: {self._title()}{self._episode_of()}{availability}',
+            format_description(self.description)
+        ])
+
 
 class Schedule(ModelBase):
     def __init__(self, dic):
@@ -203,6 +205,6 @@ class Schedule(ModelBase):
     def display(self):
         events = '\n'.join(p.display(indent=1) for p in self.events)
         return '\n'.join([
-            f'{self.title} - {self.selected_date}',
+            self.long_title,
             events
         ])
