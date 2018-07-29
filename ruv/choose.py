@@ -1,22 +1,35 @@
 import curses
 
-from collections import namedtuple
 import textwrap
 import logging
 import re
+import os
+
+from collections import namedtuple
 
 BULLET = '•'
 
 MIN_HEIGHT = 5
 
+CTRL = 0b1100000
 DOWN_KEYS = (curses.KEY_DOWN, ord('j'))
 UP_KEYS = (curses.KEY_UP, ord('k'))
 START_KEYS = (curses.KEY_HOME, ord('g'))
+PAGE_UP_KEYS = (curses.KEY_PPAGE, CTRL ^ ord('u'))
+PAGE_DOWN_KEYS = (curses.KEY_NPAGE, CTRL ^ ord('d'))
 END_KEYS = (curses.KEY_END, ord('G'))
 QUIT_KEYS = (27, ord('q'))
 PAGE_STEP = 15
 
 starting_space = re.compile(r'^ +')
+
+# Set shorter delay for Esc key
+os.environ.setdefault('ESCDELAY', '25')
+
+class Colors:
+    pass
+
+COLORS = Colors()
 
 def wrap(text, width, indent=0, **kwargs):
     try:
@@ -47,9 +60,9 @@ class Line:
         self.win = win
 
     def display(self, index, selected):
-        color = curses.A_NORMAL
+        color = COLORS.normal
         if selected:
-            color = highlightText
+            color = COLORS.highlight
 
         for line in self.lines:
             self.win.addstr(index, 2, line.ljust(self.width), color)
@@ -88,7 +101,7 @@ class Page:
 Choice = namedtuple('Choice', ['index', 'item'])
 
 class ListDisplay:
-    def __init__(self, items, title=None, display=str, itemize=None, initial_index=0):
+    def __init__(self, items, title=None, display=str, itemize=None, initial_index=0, allow_exit=True, default_terminal_colors=False):
         if not items:
             raise ValueError('List cannot be empty')
         if initial_index >= len(items):
@@ -97,13 +110,14 @@ class ListDisplay:
         self.index = initial_index
         self.page = 0
         self.title = title
-        self.setup()
+        self._setup(default_terminal_colors)
         self.items = items
         self.display = display
         self.itemize = itemize
+        self.allow_exit = allow_exit
 
         self._update_lines()
-        self.paginate()
+        self._paginate()
         self._find_current_page()
 
     @property
@@ -116,7 +130,7 @@ class ListDisplay:
             return 0
         return len(self.title_lines)
 
-    def paginate(self):
+    def _paginate(self):
         self.pages = []
         page_lines = []
         page_height = 0
@@ -129,30 +143,40 @@ class ListDisplay:
             page_height += line.size
         self.pages.append(Page(page_lines))
 
-    def update_size(self):
+    def _update_size(self):
         y, x = self.screen.getmaxyx()
         self.rows = y - 2
         self.cols = x - 2
 
-    def setup(self):
-        global highlightText
+    def _setup(self, default_colors):
         self.screen = curses.initscr()
         self.screen.erase()
         curses.noecho()
         curses.cbreak()
         curses.start_color()
-        curses.use_default_colors()
+
+        if default_colors:
+            curses.use_default_colors()
+            COLORS.normal = curses.A_NORMAL
+            COLORS.highlight = curses.A_STANDOUT
+            COLORS.title = curses.A_BOLD
+        else:
+            curses.init_pair(1, curses.COLOR_WHITE, curses.COLOR_BLACK)
+            curses.init_pair(2, curses.COLOR_BLACK, curses.COLOR_WHITE)
+            curses.init_pair(3, curses.COLOR_YELLOW, curses.COLOR_BLACK)
+            COLORS.normal = curses.color_pair(1)
+            COLORS.highlight = curses.color_pair(2)
+            COLORS.title = curses.color_pair(3) | curses.A_BOLD
+
         self.screen.keypad(1)
         curses.curs_set(0)
-        self.update_size()
-
-        curses.init_pair(1, curses.COLOR_BLACK, curses.COLOR_CYAN)
-        curses.init_pair(2, curses.COLOR_YELLOW, curses.COLOR_BLACK)
-        highlightText = curses.color_pair(1)
+        self._update_size()
 
         self._setup_title()
         self.box = curses.newwin(self.rows, self.cols, self.title_height + 1, 1)
+        self.box.attron(COLORS.normal)
         self.box.box()
+        self.box.attroff(COLORS.normal)
 
     def _update_lines(self):
         self.lines = [Line(self.box, self.display(it), self.cols, self.itemize) for it in self.items]
@@ -165,9 +189,8 @@ class ListDisplay:
         self.rows -= len(self.title_lines)
 
     def _display_title(self):
-        stuff = curses.color_pair(2)
         for index, line in enumerate(self.title_lines):
-            self.screen.addstr(index + 1, 2, line, stuff | curses.A_BOLD)
+            self.screen.addstr(index + 1, 2, line, COLORS.title)
 
     def _find_current_page(self):
         ind = self.index
@@ -181,7 +204,7 @@ class ListDisplay:
                 return
 
     def _resize(self):
-        self.update_size()
+        self._update_size()
         if self.rows < MIN_HEIGHT:
             return
         self._setup_title()
@@ -191,14 +214,14 @@ class ListDisplay:
         self._update_lines()
         self.screen.erase()
         self.box.erase()
-        self.paginate()
+        self._paginate()
         self._find_current_page()
 
     def _display_page_number(self):
         index = self.rows - 1
         page_text = f' Page {self.page + 1} / {len(self.pages)} '[:self.cols-2]
         position = max(self.cols - len(page_text) - 2, 1)
-        self.box.addstr(index, position, page_text, curses.A_NORMAL)
+        self.box.addstr(index, position, page_text, COLORS.normal)
 
     def _display_page(self):
         if self.rows < MIN_HEIGHT:
@@ -248,23 +271,21 @@ class ListDisplay:
         self.index = 0
         self._find_current_page()
 
-    def _handle_keypress(self, x):
-        if x in UP_KEYS:
-            self.up()
-        if x in DOWN_KEYS:
-            self.down()
-        if x == curses.KEY_PPAGE or curses.keyname(x) == b'^U':
-            self.page_up()
-        if x == curses.KEY_NPAGE or curses.keyname(x) == b'^D':
-            self.page_down()
-        if x == curses.KEY_RESIZE:
-            self._resize()
-        if x in START_KEYS:
-            self.first()
-        if x in END_KEYS:
-            self.last()
+    def handle_keypress(self, x):
+        actions = [
+            (UP_KEYS, self.up),
+            (DOWN_KEYS, self.down),
+            (PAGE_UP_KEYS, self.page_up),
+            (PAGE_DOWN_KEYS, self.page_down),
+            ((curses.KEY_RESIZE,), self._resize),
+            (START_KEYS, self.first),
+            (END_KEYS, self.last),
+        ]
         if x == ord('\n'):
             return False
+        for keys, action in actions:
+            if x in keys:
+                action()
         return True
 
     def choose(self):
@@ -272,14 +293,16 @@ class ListDisplay:
             self._display_page()
 
             x = self.screen.getch()
-            while x not in QUIT_KEYS:
+            while x not in QUIT_KEYS or not self.allow_exit:
                 logging.debug('key pressed %s (%s), keyname: %s', x, bin(x), curses.keyname(x))
-                if not self._handle_keypress(x):
+                if not self.handle_keypress(x):
                     break
                 logging.debug('Index: %s, Page: %s', self.index, self.page)
 
                 self.box.erase()
+                self.box.attron(COLORS.normal)
                 self.box.border(0)
+                self.box.attroff(COLORS.normal)
 
                 self._display_page()
 
@@ -296,15 +319,14 @@ class ListDisplay:
             logging.exception('Something bad happened')
 
 
-def choose(choices, title=None, display=None, index=True, itemize=None, bullet=False, initial_index=0):
-    extra_args = {'itemize': itemize}
-    if bullet:
-        extra_args['itemize'] = BULLET
+def choose(choices, title=None, display=None, index=True, **args):
+    if 'bullet' in args:
+        args['itemize'] = BULLET
+        del args['bullet']
     list_display = ListDisplay(
             choices,
             title,
             display=display,
-            initial_index=initial_index,
-            **extra_args
+            **args
     )
     return list_display.choose()
