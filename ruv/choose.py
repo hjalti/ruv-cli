@@ -208,8 +208,6 @@ class ListDisplay:
         if self.rows < MIN_HEIGHT:
             return
         self._setup_title()
-        logging.debug('Title height: %s', self.title_height)
-        logging.debug('Calling move(%s, %s)', self.title_height + 1, 1)
         self.box = curses.newwin(self.rows, self.cols, self.title_height + 1, 1)
         self._update_lines()
         self.screen.erase()
@@ -294,10 +292,8 @@ class ListDisplay:
 
             x = self.screen.getch()
             while x not in QUIT_KEYS or not self.allow_exit:
-                logging.debug('key pressed %s (%s), keyname: %s', x, bin(x), curses.keyname(x))
                 if not self.handle_keypress(x):
                     break
-                logging.debug('Index: %s, Page: %s', self.index, self.page)
 
                 self.box.erase()
                 self.box.attron(COLORS.normal)
