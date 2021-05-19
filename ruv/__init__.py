@@ -12,25 +12,15 @@ from .choose import choose
 from .conf import config_exists, copy_config, CONFIG_PATH, PLAYER, DEFAULT_TERMINAL_COLORS
 import ruv.api as api
 import ruv.__version__ as about
+from .geoapi import get_channel_stream
 
 eprint = partial(print, file=sys.stderr)
 choose = partial(choose, default_terminal_colors=DEFAULT_TERMINAL_COLORS)
 
 RUV_URL = 'http://ruv.is/'
-RUV_BASE_URL = 'http://ruvruv-live.hls.adaptive.level3.net/ruv/%s/index.m3u8'
-RUV_RADIO_BASE_URL = 'http://sip-live.hds.adaptive.level3.net/hls-live/ruv-%s/_definst_/live.m3u8'
-CHANNELS = {
-        'ruv': RUV_BASE_URL % 'ruv',
-        'ruv2': RUV_BASE_URL % 'ruv2',
-}
-CHANNEL_NAMES = list(CHANNELS.keys())
-
-RADIO = {
-        'ras1': RUV_RADIO_BASE_URL % 'ras1',
-        'ras2': RUV_RADIO_BASE_URL % 'ras2',
-        'rondo': RUV_RADIO_BASE_URL % 'ras3',
-}
-RADIO_NAMES = list(RADIO.keys())
+CHANNEL_NAMES = ['ruv', 'ruv2']
+RADIO_NAMES = ['ras1', 'ras2', 'rondo']
+RADIO_ALIASES = {'rondo': 'ras3'}
 
 
 def graceful(func):
@@ -41,15 +31,20 @@ def graceful(func):
             eprint(f'The RUV API responded with an error ({e.response.status_code})')
             eprint(f'URL: {e.request.url}')
         except ConnectionError:
-            eprint(f'Error connecting to the RUV API')
+            eprint('Error connecting to the RUV API')
     return wrapper
 
 
-def url(path):
-    return RUV_URL + path
+@graceful
+def play_stream(args, channel):
+    res = get_channel_stream(channel)
+    if res.get('geoblock'):
+        eprint('You appeared to be geoblocked')
+    url = res.get('url')
+    if not url:
+        eprint(f"RUV did not provide a URL for live streaming channel '{channel}'")
+        return
 
-
-def play_stream(args, url):
     if args and args.video_player:
         player = [args.video_player]
     else:
@@ -58,19 +53,19 @@ def play_stream(args, url):
 
 
 def live(args):
-    play_stream(args, CHANNELS[args.channel])
+    play_stream(args, args.channel)
 
 
 def default_live():
-    play_stream(None, CHANNELS['ruv'])
+    play_stream(None, 'ruv')
 
 
 def default_live2():
-    play_stream(None, CHANNELS['ruv2'])
+    play_stream(None, 'ruv2')
 
 
 def radio(args):
-    play_stream(args, RADIO[args.channel])
+    play_stream(args, RADIO_ALIASES.get(args.channel, args.channel))
 
 
 def menu(choices, title, on_chosen, display=lambda x: x.display()):
@@ -139,7 +134,7 @@ def search(args):
                 print('Offset out of range, playing oldest')
                 args.offset = -1
             episode = episodes[args.offset]
-            print(f"Playing:")
+            print("Playing:")
             if program.multiple_episodes:
                 print(episode.display())
             else:
